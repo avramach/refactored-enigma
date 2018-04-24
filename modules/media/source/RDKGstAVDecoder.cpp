@@ -10,14 +10,15 @@
 #include "RDKGstAVDecoder.h"
 
 extern void LogI(const char *format, ... );
-
-//#define AUDIO_PIPE 
-#define VIDEO_PIPE 
-#define PTS_STAMPING 
+//#define BCM_SOC 
+#define ENABLE_AUDIO_DECODE
+#define ENABLE_VIDEO_DECODE
+#define ADD_ADTS_HEADER
+//#define ENABLE_PTS_STAMPING 
 
 //5MB: for over 1 sec of jitter buffer for 20Mpbs stream
-#define APPSRC_FIFO_VSIZE 5*1024*1024 
-#define APPSRC_FIFO_ASIZE 1*1024*1024
+#define VIDEO_APPSRC_FIFO_SIZE 5*1024*1024 
+#define AUDIO_APPSRC_FIFO_SIZE 1*1024*1024
 
 #define GST_STATE_CHANGE_WAIT_SECS 5
 
@@ -197,11 +198,11 @@ TimeStamp RDKGstAVDecoder::GetVideoPosition()
    {
       if (mStreamMetadata.videoCodec != kVCNoVideo ) 
       {
-#if BCM_SOCX 
-         if(mVdec)
+#if BCM_SOC_PTS
+         if(mVideoDecoderElement)
          {  
             int64_t videoPts= 0ll;
-            g_object_get(mVdec,"video_pts", &videoPts,NULL);
+            g_object_get(mVideoDecoderElement,"video_pts", &videoPts,NULL);
             LogI("RDKGST CURRENT Position timeForm %llu" GST_TIME_FORMAT " PTS=%llu PTS90=%llu",GST_TIME_ARGS (videoPts),videoPts,videoPts/90);
             decoderpts = videoPts;
          }
@@ -377,14 +378,14 @@ bool RDKGstAVDecoder::CanConsumeData(PayloadType type, uint32_t length)
       if(type == kPTVideo)
       {
          appsrc = mVideoAppSrc;
-         totalsize = APPSRC_FIFO_VSIZE;
+         totalsize = VIDEO_APPSRC_FIFO_SIZE;
          pType = kPTVideo;
       }
       else if(type == kPTAudio)
       {
-#if defined AUDIO_PIPE
+#if defined ENABLE_AUDIO_DECODE
          appsrc = mAudioAppSrc;
-         totalsize = APPSRC_FIFO_ASIZE;
+         totalsize = AUDIO_APPSRC_FIFO_SIZE;
          pType = kPTAudio;
 #else
          return TRUE;
@@ -484,13 +485,17 @@ bool RDKGstAVDecoder::ConsumeAudioPayload(StreamPayload* pPayload)
             //(uint32_t)TimeStamp2MS(pPayload->PTS), pPayload->length, *((uint32_t*) pPayload->data));
             if(mStreamMetadata.audioCodec ==  kACAAC && mAacUtils.IsValid())
             {
+#if defined ADD_ADTS_HEADER 
                adtsheadersize = 
                   mAacUtils.SetADTSHeader(adtsheader, RDKAACUtils::MAX_BUFFER_SIZE, pPayload->length);
                if ( adtsheadersize )
+#endif
                {
                   uint32_t adtsFormatStreamLen = adtsheadersize + pPayload->length;
                   uint8_t * adtsFormatStream= (uint8_t *) malloc(adtsFormatStreamLen);
+#if defined ADD_ADTS_HEADER 
                   memcpy(adtsFormatStream,adtsheader,adtsheadersize);
+#endif
                   memcpy(adtsFormatStream+adtsheadersize,pPayload->data,pPayload->length);
                   PushParsedAACBuffer(adtsFormatStream,adtsFormatStreamLen);
                   free(adtsFormatStream);
@@ -526,6 +531,7 @@ bool RDKGstAVDecoder::H264SampleSink(TimeStamp time, uint8_t* data, int32_t len)
 void RDKGstAVDecoder::PushParsedH264Buffer(uint8_t * data, int32_t len)
 {
    EsBuffer * newBuffer = NULL;
+#if defined ENABLE_VIDEO_DECODE
    if(len)
    {
       newBuffer = (EsBuffer *) malloc(sizeof(EsBuffer));
@@ -537,11 +543,12 @@ void RDKGstAVDecoder::PushParsedH264Buffer(uint8_t * data, int32_t len)
       //writefile("videoOut.h264x",data,len);
       PushtoDecoder(newBuffer);
    }
+#endif
 }
 void RDKGstAVDecoder::PushParsedAACBuffer(uint8_t * data, int32_t len)
 {
-#if defined AUDIO_PIPE
    EsBuffer * newBuffer = NULL;
+#if defined ENABLE_AUDIO_DECODE
    if(len)
    {
       newBuffer = (EsBuffer *) malloc(sizeof(EsBuffer));
@@ -576,9 +583,11 @@ void RDKGstAVDecoder::InitializeGstPipeline(void)
    g_assert (mPlaybin);
 
    /* Set flags to show Audio and Video but ignore Subtitles */
+#if defined BCM_SOC
    g_object_get (mPlaybin, "flags", &flags, NULL);
    flags = GST_PLAY_FLAG_VIDEO | GST_PLAY_FLAG_AUDIO | GST_PLAY_FLAG_NATIVE_VIDEO | GST_PLAY_FLAG_NATIVE_AUDIO;
-   //g_object_set (mPlaybin, "flags", flags, NULL);
+   g_object_set (mPlaybin, "flags", flags, NULL);
+#endif
 
    mBus = gst_pipeline_get_bus (GST_PIPELINE (mPlaybin));
    mBusWatch= gst_bus_create_watch(mBus);
@@ -606,7 +615,7 @@ GstBuffer * RDKGstAVDecoder::CreateGstBuffer( RDKGstAVDecoder::EsBuffer * esBuff
       {
          appsrc = mVideoAppSrc;
       }
-      else if(esBuffer->type == kPTVideo)
+      else if(esBuffer->type == kPTAudio)
       {
          appsrc = mAudioAppSrc;
       }
@@ -624,7 +633,7 @@ GstBuffer * RDKGstAVDecoder::CreateGstBuffer( RDKGstAVDecoder::EsBuffer * esBuff
          {
             memcpy (gstMapInfo.data, esBuffer->data, esBuffer->size);
             gst_buffer_unmap (buffer, &gstMapInfo);
-#if defined PTS_STAMPING 
+#if defined ENABLE_PTS_STAMPING 
             GST_BUFFER_PTS (buffer) = esBuffer->pts;
             LogI(" RDKGSTAV STAMPING ORIG GSTBUFFER %s::%d ====>>>PTS=%lu [%lu ms]\n",__FUNCTION__,__LINE__,GST_BUFFER_PTS(buffer), GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer)));
 #endif
@@ -662,34 +671,34 @@ void RDKGstAVDecoder::SetAppsrcCaps(PayloadType type)
 void RDKGstAVDecoder::PlaybinFoundSource(GObject * object, GObject * orig, GParamSpec * pspec, void * user)
 {
    LogI(" RDKGSTAV GOT PLAYBIN SOURCE %s::%d\n",__FUNCTION__,__LINE__);
-   RDKGstAVDecoder * avDec = (RDKGstAVDecoder *) user;
+   RDKGstAVDecoder * avDecoder = (RDKGstAVDecoder *) user;
    GstElement *dynappsrc = NULL;
    GstElement *videoAppSrc= NULL;
    GstElement *audioAppSrc= NULL;
    g_object_get (orig, pspec->name, &dynappsrc, NULL);
-   avDec->SetDynAppsrc(dynappsrc);
+   avDecoder->SetDynAppsrc(dynappsrc);
 
-#if defined VIDEO_PIPE
+#if defined ENABLE_VIDEO_DECODE
    g_signal_emit_by_name (dynappsrc, "new-appsrc", "video", &videoAppSrc);
-   avDec->SetAppsrc(videoAppSrc,kPTVideo);
+   avDecoder->SetAppsrc(videoAppSrc,kPTVideo);
    gst_app_src_set_stream_type((GstAppSrc *)(videoAppSrc), GST_APP_STREAM_TYPE_STREAM);
    g_object_set(G_OBJECT(videoAppSrc), "emit-signals", false, NULL);
-   g_object_set(G_OBJECT(videoAppSrc), "max-bytes", gint64(APPSRC_FIFO_VSIZE), NULL);
+   g_object_set(G_OBJECT(videoAppSrc), "max-bytes", gint64(VIDEO_APPSRC_FIFO_SIZE), NULL);
    g_object_set (G_OBJECT (videoAppSrc),"stream-type", GST_APP_STREAM_TYPE_STREAM ,"format", GST_FORMAT_TIME,"is-live", TRUE,NULL);
    //g_object_set(G_OBJECT(videoAppSrc), "block", TRUE, NULL);
-   avDec->SetAppsrcCaps(kPTVideo);
+   avDecoder->SetAppsrcCaps(kPTVideo);
 #endif
 
-#if defined AUDIO_PIPE
+#if defined ENABLE_AUDIO_DECODE
    g_signal_emit_by_name (dynappsrc, "new-appsrc", "audio", &audioAppSrc);
    gst_object_ref (audioAppSrc);
-   avDec->SetAppsrc(audioAppSrc,kPTAudio);
+   avDecoder->SetAppsrc(audioAppSrc,kPTAudio);
    gst_app_src_set_stream_type((GstAppSrc *)(audioAppSrc), GST_APP_STREAM_TYPE_STREAM);
    g_object_set(G_OBJECT(audioAppSrc), "emit-signals", false, NULL);
-   g_object_set(G_OBJECT(audioAppSrc), "max-bytes", gint64(APPSRC_FIFO_ASIZE), NULL);
-   g_object_set (G_OBJECT (audioAppSrc),"stream-type", 0,"format", GST_FORMAT_TIME,"is-live", TRUE,NULL);
+   g_object_set(G_OBJECT(audioAppSrc), "max-bytes", gint64(AUDIO_APPSRC_FIFO_SIZE), NULL);
+   g_object_set (G_OBJECT (audioAppSrc),"stream-type", GST_APP_STREAM_TYPE_STREAM,"format", GST_FORMAT_TIME,"is-live", TRUE,NULL);
    //g_object_set(G_OBJECT(audioAppSrc), "block", TRUE, NULL);
-   avDec->SetAppsrcCaps(kPTAudio);
+   avDecoder->SetAppsrcCaps(kPTAudio);
 #endif
    LogI(" RDKGSTAV GOT PLAYBIN SOURCE cOMPLETE %s::%d\n",__FUNCTION__,__LINE__);
 }
@@ -810,22 +819,22 @@ void RDKGstAVDecoder::NotifyPipelineStateChange(GstState state)
 #define GRAPH_DEBUG_LEVEL GstDebugGraphDetails(GST_DEBUG_GRAPH_SHOW_ALL)
 gboolean RDKGstAVDecoder::GstBusCallback(GstBus *bus, GstMessage *msg, gpointer data)
 {
-   RDKGstAVDecoder * avDec = (RDKGstAVDecoder *) data;
-   GstElement *  pipeline = avDec->GetPipeline();
+   RDKGstAVDecoder * avDecoder= (RDKGstAVDecoder *) data;
+   GstElement *  pipeline = avDecoder->GetPipeline();
    //LogI(" RDKGSTAV GST BUS CALL %s::%d element %s type %s\n",__FUNCTION__,__LINE__,GST_MESSAGE_SRC_NAME(msg),GST_MESSAGE_TYPE_NAME(msg));
 
    switch (GST_MESSAGE_TYPE (msg)) 
    {
       case GST_MESSAGE_EOS:
          {
-            LogI("AVRA EOS from element %s: %s\n",
+            LogI("EOS from element %s: %s\n",
                   GST_OBJECT_NAME (msg->src) );
-            gboolean eos = avDec->CheckEosReceived(); 
+            gboolean eos = avDecoder->CheckEosReceived(); 
             if((GST_ELEMENT(msg->src) == pipeline) && eos)
             {
-               LogI("AVRA NOTIFY EOS from element %s: %s\n",
+               LogI("NOTIFY EOS from element %s: %s\n",
                      GST_OBJECT_NAME (msg->src) );
-               avDec->SendEOF();
+               avDecoder->SendEOF();
             }
          }
          break;
@@ -879,7 +888,7 @@ gboolean RDKGstAVDecoder::GstBusCallback(GstBus *bus, GstMessage *msg, gpointer 
                {
                   LogI("RDKGstAVDecoder  Pipeline State PLAYING signalling %d-->%d\n", old_state,new_state);
                   LogI( "BUS CB SIGNAL pthread %d",pthread_self());
-                  avDec->NotifyPipelineStateChange(new_state);
+                  avDecoder->NotifyPipelineStateChange(new_state);
                }
             }
             if (msg->src == (GstObject *)pipeline)
@@ -892,7 +901,7 @@ gboolean RDKGstAVDecoder::GstBusCallback(GstBus *bus, GstMessage *msg, gpointer 
                   char time[50];
                   char dotName[50];
                   strftime(time, sizeof(time), "%H-%M-%S", now);
-                  snprintf (dotName, sizeof(dotName), "x%s-%s", avDec->GetPipelineStateStr(new_state), time);
+                  snprintf (dotName, sizeof(dotName), "x%s-%s", avDecoder->GetPipelineStateStr(new_state), time);
                   GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(pipeline), GRAPH_DEBUG_LEVEL, dotName);
                }
             }                        
@@ -906,23 +915,24 @@ gboolean RDKGstAVDecoder::GstBusCallback(GstBus *bus, GstMessage *msg, gpointer 
 
 void RDKGstAVDecoder::PipelineElementAdded(GstBin *bin, GstElement *element, gpointer  data)
 {
+   RDKGstAVDecoder * avDecoder= (RDKGstAVDecoder *) data;
    LogI("on_auto_element_added() new Element: %s !!\n", GST_ELEMENT_NAME(element));
    if ( GST_IS_BIN(element) )
    {
       LogI( "%s : Element is a BIN of name (%s) ! it can have sub-elements ...",__FUNCTION__, GST_ELEMENT_NAME(element));
-      g_signal_connect( element, "element-added", G_CALLBACK(PipelineElementAdded), NULL);
+      g_signal_connect( element, "element-added", G_CALLBACK(PipelineElementAdded), data);
    }
 #if defined BCM_SOC 
    gchar *name = gst_element_get_name( element );
    if ( NULL != strstr((const char *)name, "brcmvideodecoder") )
    {
-      avDec->setDecoder(element,kMediaTypeVideo);
+      avDecoder->SetDecoderElement(element, kPTVideo);
       g_object_set(G_OBJECT(element), "sync-off", true, NULL);
       LogI("RDKGSTAV SETTING VIDEO FREE RUNNING %s::%d \n",__FUNCTION__,__LINE__);
    }
    else if ( NULL != strstr((const char *)name, "brcmaudiodecoder") )
    {
-      avDec->setDecoder(element,kMediaTypeAudio);
+      avDecoder->SetDecoderElement(element, kPTAudio);
       g_object_set(G_OBJECT(element), "sync-off", true, NULL);
       LogI("RDKGSTAV SETTING AUDIO FREE RUNNING  %s::%d \n",__FUNCTION__,__LINE__);
    }

@@ -52,6 +52,7 @@ namespace media
          virtual bool H264SampleSink(TimeStamp , uint8_t* ,int32_t );
          /*---------------------------------------*/
          gboolean  CheckEosReceived(void){return mEosRecieved;}
+
          GstElement * GetAppsrc(PayloadType type)
          {
             if(type == kPTVideo)
@@ -63,6 +64,7 @@ namespace media
                return mAudioAppSrc;
             }
          }
+
          void SetAppsrc(GstElement * appsrc,PayloadType type)
          {
             if(type == kPTVideo)
@@ -75,10 +77,34 @@ namespace media
             }
             gst_object_ref (appsrc);
          }
-         void SetDynAppsrc(GstElement * elem){mDynAppsrc = elem;}
-         void GetDecoderState(void){return mDecoderState;}
-         void SetDecoderState(DecState state){mDecoderState = state;}
 
+         GstElement * GetDecoderElement(PayloadType type)
+         {
+            if(type == kPTVideo)
+            {
+               return mVideoDecoderElement;
+            }
+            if(type == kPTAudio)
+            {
+               return mAudioDecoderElement;
+            }
+         }
+
+         void SetDecoderElement(GstElement * decoder,PayloadType type)
+         {
+            if(type == kPTVideo)
+            {
+               mVideoDecoderElement = decoder;
+            }
+            if(type == kPTAudio)
+            {
+               mAudioDecoderElement = decoder;
+            }
+         }
+
+         void SetDynAppsrc(GstElement * element){mDynAppsrc = element;}
+	 void GetDecoderState(void){return mDecoderState;}
+         void SetDecoderState(DecState state){mDecoderState = state;}       
          GstElement * GetPipeline(void){return mPlaybin;}
          void NotifyPipelineStateChange(GstState state);
       private:
@@ -90,6 +116,8 @@ namespace media
          GstElement *mDynAppsrc;
          GstElement *mVideoAppSrc;
          GstElement *mAudioAppSrc;
+         GstElement *mVideoDecoderElement;
+         GstElement *mAudioDecoderElement;
          GstBus *mBus;
          gboolean mEosRecieved;
          DecState mDecoderState;
