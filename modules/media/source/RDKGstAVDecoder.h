@@ -40,7 +40,7 @@ namespace media
          virtual bool ConsumeData(StreamPayload* pPayload, bool interleaved = true);
          virtual void GetQOSData(QOSData & qosDataToSet);
          virtual void NotifyEOF();
-         bool HandleStreamSwitch(const VideoMetaData & metadata);
+         virtual bool HandleStreamSwitch(const VideoMetaData & metadata);
          virtual TimeStamp GetVideoPosition();
          virtual void Pause();
          virtual bool Resume();
