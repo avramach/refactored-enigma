@@ -10,9 +10,10 @@
 #include "RDKGstAVDecoder.h"
 
 extern void LogI(const char *format, ... );
-
+//#define BCM_SOC 
 //#define AUDIO_PIPE 
 #define VIDEO_PIPE 
+#define ADTS 
 #define PTS_STAMPING 
 
 //5MB: for over 1 sec of jitter buffer for 20Mpbs stream
@@ -197,7 +198,7 @@ TimeStamp RDKGstAVDecoder::GetVideoPosition()
    {
       if (mStreamMetadata.videoCodec != kVCNoVideo ) 
       {
-#if BCM_SOCX 
+#if BCM_SOC_PTS
          if(mVdec)
          {  
             int64_t videoPts= 0ll;
@@ -484,13 +485,17 @@ bool RDKGstAVDecoder::ConsumeAudioPayload(StreamPayload* pPayload)
             //(uint32_t)TimeStamp2MS(pPayload->PTS), pPayload->length, *((uint32_t*) pPayload->data));
             if(mStreamMetadata.audioCodec ==  kACAAC && mAacUtils.IsValid())
             {
+#if defined ADTS 
                adtsheadersize = 
                   mAacUtils.SetADTSHeader(adtsheader, RDKAACUtils::MAX_BUFFER_SIZE, pPayload->length);
                if ( adtsheadersize )
+#endif
                {
                   uint32_t adtsFormatStreamLen = adtsheadersize + pPayload->length;
                   uint8_t * adtsFormatStream= (uint8_t *) malloc(adtsFormatStreamLen);
+#if defined ADTS 
                   memcpy(adtsFormatStream,adtsheader,adtsheadersize);
+#endif
                   memcpy(adtsFormatStream+adtsheadersize,pPayload->data,pPayload->length);
                   PushParsedAACBuffer(adtsFormatStream,adtsFormatStreamLen);
                   free(adtsFormatStream);
@@ -526,6 +531,7 @@ bool RDKGstAVDecoder::H264SampleSink(TimeStamp time, uint8_t* data, int32_t len)
 void RDKGstAVDecoder::PushParsedH264Buffer(uint8_t * data, int32_t len)
 {
    EsBuffer * newBuffer = NULL;
+#if defined VIDEO_PIPE
    if(len)
    {
       newBuffer = (EsBuffer *) malloc(sizeof(EsBuffer));
@@ -537,6 +543,7 @@ void RDKGstAVDecoder::PushParsedH264Buffer(uint8_t * data, int32_t len)
       //writefile("videoOut.h264x",data,len);
       PushtoDecoder(newBuffer);
    }
+#endif
 }
 void RDKGstAVDecoder::PushParsedAACBuffer(uint8_t * data, int32_t len)
 {
@@ -576,9 +583,11 @@ void RDKGstAVDecoder::InitializeGstPipeline(void)
    g_assert (mPlaybin);
 
    /* Set flags to show Audio and Video but ignore Subtitles */
+#if defined BCM_SOC
    g_object_get (mPlaybin, "flags", &flags, NULL);
    flags = GST_PLAY_FLAG_VIDEO | GST_PLAY_FLAG_AUDIO | GST_PLAY_FLAG_NATIVE_VIDEO | GST_PLAY_FLAG_NATIVE_AUDIO;
-   //g_object_set (mPlaybin, "flags", flags, NULL);
+   g_object_set (mPlaybin, "flags", flags, NULL);
+#endif
 
    mBus = gst_pipeline_get_bus (GST_PIPELINE (mPlaybin));
    mBusWatch= gst_bus_create_watch(mBus);
@@ -818,12 +827,12 @@ gboolean RDKGstAVDecoder::GstBusCallback(GstBus *bus, GstMessage *msg, gpointer 
    {
       case GST_MESSAGE_EOS:
          {
-            LogI("AVRA EOS from element %s: %s\n",
+            LogI("EOS from element %s: %s\n",
                   GST_OBJECT_NAME (msg->src) );
             gboolean eos = avDec->CheckEosReceived(); 
             if((GST_ELEMENT(msg->src) == pipeline) && eos)
             {
-               LogI("AVRA NOTIFY EOS from element %s: %s\n",
+               LogI("NOTIFY EOS from element %s: %s\n",
                      GST_OBJECT_NAME (msg->src) );
                avDec->SendEOF();
             }
@@ -906,11 +915,12 @@ gboolean RDKGstAVDecoder::GstBusCallback(GstBus *bus, GstMessage *msg, gpointer 
 
 void RDKGstAVDecoder::PipelineElementAdded(GstBin *bin, GstElement *element, gpointer  data)
 {
+
    LogI("on_auto_element_added() new Element: %s !!\n", GST_ELEMENT_NAME(element));
    if ( GST_IS_BIN(element) )
    {
       LogI( "%s : Element is a BIN of name (%s) ! it can have sub-elements ...",__FUNCTION__, GST_ELEMENT_NAME(element));
-      g_signal_connect( element, "element-added", G_CALLBACK(PipelineElementAdded), NULL);
+      g_signal_connect( element, "element-added", G_CALLBACK(PipelineElementAdded), data);
    }
 #if defined BCM_SOC 
    gchar *name = gst_element_get_name( element );
