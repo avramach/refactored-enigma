@@ -40,7 +40,7 @@ namespace media
          virtual bool ConsumeData(StreamPayload* pPayload, bool interleaved = true);
          virtual void GetQOSData(QOSData & qosDataToSet);
          virtual void NotifyEOF();
-         bool HandleStreamSwitch(const VideoMetaData & metadata);
+         virtual bool HandleStreamSwitch(const VideoMetaData & metadata);
          virtual TimeStamp GetVideoPosition();
          virtual void Pause();
          virtual bool Resume();
@@ -52,6 +52,7 @@ namespace media
          virtual bool H264SampleSink(TimeStamp , uint8_t* ,int32_t );
          /*---------------------------------------*/
          gboolean  CheckEosReceived(void){return mEosRecieved;}
+
          GstElement * GetAppsrc(PayloadType type)
          {
             if(type == kPTVideo)
@@ -63,6 +64,7 @@ namespace media
                return mAudioAppSrc;
             }
          }
+
          void SetAppsrc(GstElement * appsrc,PayloadType type)
          {
             if(type == kPTVideo)
@@ -75,29 +77,32 @@ namespace media
             }
             gst_object_ref (appsrc);
          }
-         GstElement * getDecoder(mediaType type)
+
+         GstElement * GetDecoderElement(PayloadType type)
          {
-            if(type == kMediaTypeVideo)
+            if(type == kPTVideo)
             {
-               return mVdec;
+               return mVideoDecoderElement;
             }
-            if(type == kMediaTypeAudio)
+            if(type == kPTAudio)
             {
-               return mAdec;
+               return mAudioDecoderElement;
             }
          }
-         void  setDecoder(GstElement *  decoder,mediaType type)
+
+         void SetDecoderElement(GstElement * decoder,PayloadType type)
          {
-            if(type == kMediaTypeVideo)
+            if(type == kPTVideo)
             {
-               mVdec = decoder;
+               mVideoDecoderElement = decoder;
             }
-            if(type == kMediaTypeAudio)
+            if(type == kPTAudio)
             {
-               mAdec = decoder;
+               mAudioDecoderElement = decoder;
             }
          }
-         void SetDynAppsrc(GstElement * elem){mDynAppsrc = elem;}
+
+         void SetDynAppsrc(GstElement * element){mDynAppsrc = element;}
 	 void GetDecoderState(void){return mDecoderState;}
          void SetDecoderState(DecState state){mDecoderState = state;}       
          GstElement * GetPipeline(void){return mPlaybin;}
@@ -111,8 +116,8 @@ namespace media
          GstElement *mDynAppsrc;
          GstElement *mVideoAppSrc;
          GstElement *mAudioAppSrc;
-         GstElement *mVdec;
-         GstElement *mAdec;
+         GstElement *mVideoDecoderElement;
+         GstElement *mAudioDecoderElement;
          GstBus *mBus;
          gboolean mEosRecieved;
          DecState mDecoderState;
