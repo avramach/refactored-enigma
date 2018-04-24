@@ -75,10 +75,31 @@ namespace media
             }
             gst_object_ref (appsrc);
          }
+         GstElement * getDecoder(mediaType type)
+         {
+            if(type == kMediaTypeVideo)
+            {
+               return mVdec;
+            }
+            if(type == kMediaTypeAudio)
+            {
+               return mAdec;
+            }
+         }
+         void  setDecoder(GstElement *  decoder,mediaType type)
+         {
+            if(type == kMediaTypeVideo)
+            {
+               mVdec = decoder;
+            }
+            if(type == kMediaTypeAudio)
+            {
+               mAdec = decoder;
+            }
+         }
          void SetDynAppsrc(GstElement * elem){mDynAppsrc = elem;}
-         void GetDecoderState(void){return mDecoderState;}
-         void SetDecoderState(DecState state){mDecoderState = state;}
-
+	 void GetDecoderState(void){return mDecoderState;}
+         void SetDecoderState(DecState state){mDecoderState = state;}       
          GstElement * GetPipeline(void){return mPlaybin;}
          void NotifyPipelineStateChange(GstState state);
       private:
@@ -90,6 +111,8 @@ namespace media
          GstElement *mDynAppsrc;
          GstElement *mVideoAppSrc;
          GstElement *mAudioAppSrc;
+         GstElement *mVdec;
+         GstElement *mAdec;
          GstBus *mBus;
          gboolean mEosRecieved;
          DecState mDecoderState;
