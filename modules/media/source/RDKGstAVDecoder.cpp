@@ -11,11 +11,14 @@
 
 extern void LogI(const char *format, ... );
 
-#define VIDEO_PIPE 1
-#define AUDIO_PIPE 1
-#define APPSRC_FIFO_VSIZE 5*1024*1024 
+//#define AUDIO_PIPE 
+#define VIDEO_PIPE 
+#define PTS_STAMPING 
+
 //5MB: for over 1 sec of jitter buffer for 20Mpbs stream
+#define APPSRC_FIFO_VSIZE 5*1024*1024 
 #define APPSRC_FIFO_ASIZE 1*1024*1024
+
 #define GST_STATE_CHANGE_WAIT_SECS 5
 
 using namespace media;
@@ -205,7 +208,7 @@ TimeStamp RDKGstAVDecoder::GetVideoPosition()
 #else
          if (gst_element_query_position (mPlaybin, GST_FORMAT_TIME, &position)) 
          {
-            //LogI("RDKGST CURRENT Position %llu Time %" GST_TIME_FORMAT ,position,GST_TIME_ARGS (position));
+            LogI("RDKGST CURRENT Position %llu Time %" GST_TIME_FORMAT ,position,GST_TIME_ARGS (position));
             decoderpts = position;
          }
 #endif
@@ -379,9 +382,13 @@ bool RDKGstAVDecoder::CanConsumeData(PayloadType type, uint32_t length)
       }
       else if(type == kPTAudio)
       {
+#if defined AUDIO_PIPE
          appsrc = mAudioAppSrc;
          totalsize = APPSRC_FIFO_ASIZE;
          pType = kPTAudio;
+#else
+         return TRUE;
+#endif
       }
       else
       {
@@ -404,7 +411,7 @@ bool RDKGstAVDecoder::CanConsumeData(PayloadType type, uint32_t length)
       }
       if(!ret)
       {
-         LogI("<<%s CheckSpace=%d Type %d DecState %d InputSize %u FifoLevel %lu FifoSize %lu FifoRemain %lu[%lu percent used]\n", __FUNCTION__, ret, type, mDecoderState, length, level, totalsize, avail, (avail*100)/totalsize);
+         LogI("<<%s CheckSpace=%d Type %d DecState %d InputSize %u FifoLevel %lu FifoSize %lu FifoRemain %lu[%lu %%]\n", __FUNCTION__, ret, type, mDecoderState, length, level, totalsize, avail, (avail*100)/totalsize);
       }
    }
    return ret;
@@ -533,6 +540,7 @@ void RDKGstAVDecoder::PushParsedH264Buffer(uint8_t * data, int32_t len)
 }
 void RDKGstAVDecoder::PushParsedAACBuffer(uint8_t * data, int32_t len)
 {
+#if defined AUDIO_PIPE
    EsBuffer * newBuffer = NULL;
    if(len)
    {
@@ -545,6 +553,7 @@ void RDKGstAVDecoder::PushParsedAACBuffer(uint8_t * data, int32_t len)
       //writefile("audioOut.aacx",data,len);
       PushtoDecoder(newBuffer);
    }
+#endif
 }
 
 typedef enum {
@@ -590,16 +599,38 @@ void RDKGstAVDecoder::InitializeGstPipeline(void)
 GstBuffer * RDKGstAVDecoder::CreateGstBuffer( RDKGstAVDecoder::EsBuffer * esBuffer)
 {
    GstBuffer *buffer = NULL;
+   GstElement * appsrc = NULL;
    if(esBuffer)
    {
+      if(esBuffer->type == kPTVideo)
+      {
+         appsrc = mVideoAppSrc;
+      }
+      else if(esBuffer->type == kPTVideo)
+      {
+         appsrc = mAudioAppSrc;
+      }
+      else
+      {
+         LogI(" RDKGSTAV Cannot Create Buffer ,Unknown PayLoad Type %s::%d type =%d\n",__FUNCTION__,__LINE__,esBuffer->type);
+         return buffer;
+      }
+
       buffer = gst_buffer_new_allocate (NULL, esBuffer->size, NULL);
-      if (buffer != NULL) {
+      if (buffer != NULL) 
+      {
          GstMapInfo gstMapInfo;
-         if (gst_buffer_map (buffer, &gstMapInfo, GST_MAP_WRITE)) {
+         if (gst_buffer_map (buffer, &gstMapInfo, GST_MAP_WRITE)) 
+         {
             memcpy (gstMapInfo.data, esBuffer->data, esBuffer->size);
             gst_buffer_unmap (buffer, &gstMapInfo);
-            //GST_BUFFER_PTS (buffer) = esBuffer->pts;
-         } else {
+#if defined PTS_STAMPING 
+            GST_BUFFER_PTS (buffer) = esBuffer->pts;
+            LogI(" RDKGSTAV STAMPING ORIG GSTBUFFER %s::%d ====>>>PTS=%lu [%lu ms]\n",__FUNCTION__,__LINE__,GST_BUFFER_PTS(buffer), GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer)));
+#endif
+         }
+         else 
+         {
             LogI( "Error in CreateGstBuffer. Failed to map GST buffer");
             gst_buffer_unref (buffer);
          }
@@ -644,7 +675,7 @@ void RDKGstAVDecoder::PlaybinFoundSource(GObject * object, GObject * orig, GPara
    gst_app_src_set_stream_type((GstAppSrc *)(videoAppSrc), GST_APP_STREAM_TYPE_STREAM);
    g_object_set(G_OBJECT(videoAppSrc), "emit-signals", false, NULL);
    g_object_set(G_OBJECT(videoAppSrc), "max-bytes", gint64(APPSRC_FIFO_VSIZE), NULL);
-   g_object_set (G_OBJECT (videoAppSrc),"stream-type", 0,"format", GST_FORMAT_TIME,"is-live", TRUE,NULL);
+   g_object_set (G_OBJECT (videoAppSrc),"stream-type", GST_APP_STREAM_TYPE_STREAM ,"format", GST_FORMAT_TIME,"is-live", TRUE,NULL);
    //g_object_set(G_OBJECT(videoAppSrc), "block", TRUE, NULL);
    avDec->SetAppsrcCaps(kPTVideo);
 #endif
@@ -725,33 +756,33 @@ gboolean RDKGstAVDecoder::ChangePipelineState(DecState state)
       sret = gst_element_set_state (mPlaybin, gstState);
       if(sret != GST_STATE_CHANGE_FAILURE)
       { 
-         LogI(" RDKGSTAV INIT STATE CHANGE ret %d %s::%d reqState %d decState %d finalState %d wait %d\n",sret,__FUNCTION__,__LINE__,state,mDecoderState,finalState, wait);
+         LogI(" RDKGSTAV STATE CHANGE ret %d %s::%d reqState %d decState %d finalState %d wait %d\n",sret,__FUNCTION__,__LINE__,state,mDecoderState,finalState, wait);
          if(wait)
          {
-            LogI(" RDKGSTAV INIT STATE CHANGE WAITING %s::%d reqState %d decState %d\n",__FUNCTION__,__LINE__,state,mDecoderState);
+            LogI(" RDKGSTAV STATE CHANGE WAITING %s::%d reqState %d decState %d\n",__FUNCTION__,__LINE__,state,mDecoderState);
             endTime = g_get_monotonic_time () + G_TIME_SPAN_SECOND * GST_STATE_CHANGE_WAIT_SECS ;
             if ( FALSE == g_cond_wait_until(&mStateCondition, &mPipelineMutex, endTime) )  
             {
-               LogI(" RDKGSTAV INIT STATE CHANGE TIMEDOUT %s::%d\n",__FUNCTION__,__LINE__);
+               LogI(" RDKGSTAV STATE CHANGE TIMEDOUT %s::%d\n",__FUNCTION__,__LINE__);
                ret = FALSE;
             }
             if(mDecoderState != finalState)
             {
-               LogI(" RDKGSTAV INIT STATE CHANGE DOES NOT MATCH %s::%d reqState %d decState %d finalState %d\n",__FUNCTION__,__LINE__,state,mDecoderState,finalState);
+               LogI(" RDKGSTAV STATE CHANGE DOES NOT MATCH %s::%d reqState %d decState %d finalState %d\n",__FUNCTION__,__LINE__,state,mDecoderState,finalState);
                ret = FALSE;
             }
          }
       }
       else
       {
-         LogI(" RDKGSTAV INIT STATE CHANGE RETURNED FAILURE %s::%d\n",__FUNCTION__,__LINE__);
+         LogI(" RDKGSTAV STATE CHANGE RETURNED FAILURE %s::%d\n",__FUNCTION__,__LINE__);
          ret = FALSE;
       }
       g_mutex_unlock(&mPipelineMutex);
    }
    else
    {
-      LogI(" RDKGSTAV INIT STATE CHANGE ALREADY COMPLETE %s::%d reqState %d decState %d\n",__FUNCTION__,__LINE__,state,mDecoderState);
+      LogI(" RDKGSTAV STATE CHANGE ALREADY COMPLETE %s::%d reqState %d decState %d\n",__FUNCTION__,__LINE__,state,mDecoderState);
    }
    return ret;
 }
@@ -924,7 +955,7 @@ void RDKGstAVDecoder::PushtoDecoder(EsBuffer * newEsBuffer)
 
          if(gstBuf && appsrc)
          {
-            LogI(" RDKGSTAV GOT GST BUFFER %s::%d TYPE %d\n",__FUNCTION__,__LINE__,newEsBuffer->type);
+            LogI(" RDKGSTAV GOT GST BUFFER %s::%d TYPE %d ,BUF PTS %lu \n",__FUNCTION__,__LINE__,newEsBuffer->type,GST_BUFFER_PTS(gstBuf));
             GstFlowReturn flow;
 
             pushsucccount++;

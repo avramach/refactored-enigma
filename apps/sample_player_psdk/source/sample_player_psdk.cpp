@@ -43,7 +43,7 @@ void LogI(const char *format, ... )
    va_end (args);
    snprintf(final,511,"%s%ld %s %s\n",xbuffer,tv.tv_usec, "test", buffer);
    int strl = strlen(final);
-   pFile = fopen("x.log", "a");
+   pFile = fopen("aptx.log", "a");
    if(pFile)
    {
       fwrite (final, sizeof(char), strl, pFile);
@@ -309,7 +309,7 @@ static void handle_cmd(guint cmd)
             LogI(" ################## SEEKING sTART  #######################\n");
             LogI(" ################## SEEKING 5000  #######################\n");
             //player->seek(20000);
-            error = player->seek( 10000 );
+            error = player->seek( 50000 );
             LogI("Return Value for seeking: %d", error);
             LogI(" ################## SEEKING DONE #######################\n");
             break;
